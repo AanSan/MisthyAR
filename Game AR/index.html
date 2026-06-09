@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Aetheria: AR Perspective Riddle</title>
+    <meta name="description" content="Temukan rahasia kuno yang tersembunyi dalam dimensi 3D dan AR. Sejajarkan sudut pandangmu untuk mengungkap teka-teki.">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Orbitron:wght@400;700&family=Plus+Jakarta+Sans:wght@300;400;600&display=swap" rel="stylesheet">
+    <!-- FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Main stylesheet -->
+    <link rel="stylesheet" href="styles.css">
+    <!-- Three.js and OrbitControls -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <!-- Background Canvas for Three.js -->
+    <div id="canvas-container"></div>
+
+    <!-- Mystical Vignette / Noise Overlay -->
+    <div class="vignette-overlay"></div>
+    <div class="noise-overlay"></div>
+
+    <!-- UI Overlay / HUD -->
+    <div id="hud-container">
+        <!-- Header -->
+        <header class="game-header">
+            <div class="logo">
+                <span class="logo-icon"><i class="fa-solid fa-wand-magic-sparkles"></i></span>
+                <h1>AETHERIA</h1>
+            </div>
+            <div class="level-indicator">
+                <span class="label">Riddle</span>
+                <span id="current-level-num" class="value">I</span>
+            </div>
+            <div class="audio-toggle" id="audio-btn">
+                <i class="fa-solid fa-volume-xmark"></i>
+            </div>
+        </header>
+
+        <!-- Main HUD Panel (Bottom Center/Left) -->
+        <div class="hud-panel bottom-panel">
+            <div class="riddle-box">
+                <h2 id="riddle-title">Gerbang Pertama: Pecahan Cahaya</h2>
+                <p id="riddle-desc">"Yang terpecah dalam ruang harus disatukan oleh pandangan yang tepat. Temukan sudut kebenaran."</p>
+            </div>
+            
+            <div class="alignment-tracker">
+                <div class="tracker-label">Resonansi Jiwa</div>
+                <div class="progress-bar-container">
+                    <div id="alignment-progress" class="progress-bar"></div>
+                </div>
+                <div id="alignment-percentage" class="percentage-val">0%</div>
+            </div>
+
+            <div class="hud-controls">
+                <button id="ar-btn" class="btn btn-primary btn-glow">
+                    <i class="fa-solid fa-cube"></i> Mode AR (Gunakan Kamera)
+                </button>
+                <button id="hint-btn" class="btn btn-secondary">
+                    <i class="fa-solid fa-lightbulb"></i> Petunjuk
+                </button>
+            </div>
+        </div>
+
+        <!-- Hint Popup -->
+        <div id="hint-popup" class="popup-overlay hidden">
+            <div class="popup-content">
+                <h3><i class="fa-solid fa-circle-info"></i> Bisikan Aether</h3>
+                <p id="hint-text">Coba geser pandanganmu secara vertikal dan sejajarkan lingkaran terluar dengan bagian intinya.</p>
+                <button id="close-hint-btn" class="btn btn-small">Mengerti</button>
+            </div>
+        </div>
+
+        <!-- Welcome / Start Screen Overlay -->
+        <div id="start-overlay" class="overlay">
+            <div class="overlay-card glass">
+                <div class="rune-seal"></div>
+                <h2 class="title-glow">A E T H E R I A</h2>
+                <p class="subtitle">3D AR Perspective Puzzle</p>
+                <div class="intro-text">
+                    <p>Alam semesta menyimpan rahasia dalam dimensi tersembunyi. Hanya mereka yang berani melihat dari sudut pandang yang berbeda yang dapat mengungkap kebenaran.</p>
+                    <p class="instruction-tip"><i class="fa-solid fa-mobile-screen-button"></i> <strong>Instruksi:</strong> Putar atau orbitkan kameramu di sekitar objek misterius sampai bentuknya sejajar sempurna dan bersinar.</p>
+                </div>
+                <button id="start-game-btn" class="btn btn-primary btn-glow btn-large">
+                    <i class="fa-solid fa-play"></i> Mulai Ritual
+                </button>
+            </div>
+        </div>
+
+        <!-- Level Success Overlay -->
+        <div id="success-overlay" class="overlay hidden">
+            <div class="overlay-card glass success-card">
+                <div class="success-icon"><i class="fa-solid fa-circle-check"></i></div>
+                <h2 class="text-glow-green">Resonansi Sempurna!</h2>
+                <p id="success-message">Gerbang dimensi telah terbuka...</p>
+                <button id="next-level-btn" class="btn btn-primary btn-glow btn-large">
+                    Lanjutkan Perjalanan <i class="fa-solid fa-arrow-right"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Ending Overlay -->
+        <div id="ending-overlay" class="overlay hidden">
+            <div class="overlay-card glass ending-card">
+                <div class="rune-seal glowing-seal"></div>
+                <h2 class="title-glow">Gerbang Terbuka</h2>
+                <p class="subtitle">Teka-teki Aetheria Telah Terpecahkan</p>
+                <div class="intro-text">
+                    <p>Selamat, Pencari Kebenaran. Kamu telah menyejajarkan dimensi yang retak dan memulihkan energi Aetheria.</p>
+                    <p>Setiap sudut pandang yang kamu temukan membuktikan bahwa kebenaran sejati sering kali hanya memerlukan sudut pandang yang berbeda.</p>
+                </div>
+                <button id="restart-game-btn" class="btn btn-primary btn-glow btn-large">
+                    Mainkan Lagi
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- AR fallback banner/instructions -->
+    <div id="ar-fallback-alert" class="ar-alert hidden">
+        <div class="ar-alert-content">
+            <p><i class="fa-solid fa-triangle-exclamation"></i> Browser ini tidak mendukung WebXR AR penuh. Menggunakan simulator orbit giroskopik.</p>
+            <button id="close-ar-alert-btn">OK</button>
+        </div>
+    </div>
+
+    <!-- Core Game script -->
+    <script src="app.js"></script>
+</body>
+</html>

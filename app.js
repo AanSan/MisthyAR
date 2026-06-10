@@ -1,10 +1,17 @@
 // --- Game State & Level Data ---
+let audioCtx = null;
+let audioEnabled = false;
+let ambientOsc, ambientFilter, resonanceOsc, resonanceGain;
+let scene, camera, renderer, controls, levelGroup, particles;
+let isAligned = false;
+let currentLevelIndex = 0;
+
 const levels = [
     {
         title: "Teka-teki I: Cincin Aetheria",
         desc: '"Cincin kosmis yang tercerai-berai. Putar sudut pandangmu untuk menyatukan lingkaran energi dan inti cahaya."',
         hint: "Gunakan klik/drag untuk memutar kamera. Cari sudut pandang di mana lingkaran luar, lingkaran dalam, dan inti tengah sejajar melingkar sempurna.",
-        targetAngle: { x: 0.5, y: 0.8, z: 0 }, // Target camera rotation representation
+        targetAngle: { x: 0.5, y: 0.8, z: 0 },
         tolerance: 0.08,
         setup: createLevel1
     },
@@ -20,40 +27,20 @@ const levels = [
         title: "Teka-teki III: Pilar Penjaga",
         desc: '"Tiga pilar kuno menyimpan ukiran simbol misterius. Temukan perspektif yang menyelaraskan ukiran tersebut menjadi satu kesatuan."',
         hint: "Posisikan kamera sehingga simbol-simbol di ketiga pilar tersebut tumpang tindih dan membentuk satu rune utuh yang melayang di tengah.",
-        targetAngle: { x: 0.2, y: -0.9, z: 0 },
+        targetAngle: { x: 0.1, y: -0.9, z: 0 },
         tolerance: 0.08,
         setup: createLevel3
     }
 ];
 
-let currentLevel = 0;
-let scene, camera, renderer, controls;
-let levelGroup = null;
-let particles = null;
-let isAligned = false;
-let alignmentProgress = 0;
-
-// Cached DOM references for hot-path performance
-let _elAlignProgress = null;
-let _elAlignPercentage = null;
-let _lastAlignPct = -1; // Track last written value to skip redundant DOM writes
-let _alignFrameSkip = 0; // Frame counter for throttled alignment checks
-const ALIGN_CHECK_INTERVAL = 2; // Check alignment every N frames (2 = 30Hz on 60fps)
-
-// Resize debounce
-let _resizeTimer = null;
-
-// Audio variables
-let audioCtx = null;
-let ambientOsc = null;
-let ambientFilter = null;
-let resonanceOsc = null;
-let resonanceGain = null;
-let audioEnabled = false;
-
-// --- Web Audio Synth ---
+// --- Web Audio Synth with Browser Fallbacks ---
 function initAudio() {
-    if (audioCtx) return;
+    if (audioCtx) {
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+        return;
+    }
     
     try {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -61,7 +48,7 @@ function initAudio() {
         // 1. Spooky Ambient Drone
         ambientOsc = audioCtx.createOscillator();
         ambientOsc.type = 'sawtooth';
-        ambientOsc.frequency.setValueAtTime(55, audioCtx.currentTime); // low A drone
+        ambientOsc.frequency.setValueAtTime(55, audioCtx.currentTime);
         
         ambientFilter = audioCtx.createBiquadFilter();
         ambientFilter.type = 'lowpass';
@@ -76,23 +63,22 @@ function initAudio() {
         ambientGain.connect(audioCtx.destination);
         ambientOsc.start();
 
-        // LFO to modulate filter cutoff for mystical movement
         const lfo = audioCtx.createOscillator();
         lfo.type = 'sine';
-        lfo.frequency.setValueAtTime(0.1, audioCtx.currentTime); // very slow sweep
+        lfo.frequency.setValueAtTime(0.1, audioCtx.currentTime);
         const lfoGain = audioCtx.createGain();
         lfoGain.gain.setValueAtTime(80, audioCtx.currentTime);
         lfo.connect(lfoGain);
         lfoGain.connect(ambientFilter.frequency);
         lfo.start();
 
-        // 2. Resonance Feedback Synth (reacts to player alignment)
+        // 2. Resonance Feedback Synth
         resonanceOsc = audioCtx.createOscillator();
         resonanceOsc.type = 'sine';
         resonanceOsc.frequency.setValueAtTime(220, audioCtx.currentTime);
         
         resonanceGain = audioCtx.createGain();
-        resonanceGain.gain.setValueAtTime(0, audioCtx.currentTime); // silent initially
+        resonanceGain.gain.setValueAtTime(0, audioCtx.currentTime);
         
         const resonanceFilter = audioCtx.createBiquadFilter();
         resonanceFilter.type = 'peaking';
@@ -105,631 +91,317 @@ function initAudio() {
         resonanceOsc.start();
         
         audioEnabled = true;
-        document.getElementById('audio-btn').innerHTML = '<i class="fa-solid fa-volume-high"></i>';
+        const audioBtn = document.getElementById('audio-btn');
+        if (audioBtn) audioBtn.innerHTML = '<i class="fa-solid fa-volume-high"></i>';
     } catch (e) {
-        console.error("Web Audio API not supported/allowed in browser", e);
+        console.error("Web Audio API tidak didukung atau diblokir browser:", e);
     }
 }
 
-function updateResonanceAudio(progress) {
-    if (!audioEnabled || !audioCtx) return;
-    
-    // As progress goes from 0 to 1, volume & frequency rise
-    const targetGain = progress * 0.18;
-    const targetFreq = 220 + (progress * 330); // 220Hz to 550Hz
-    
-    resonanceGain.gain.setTargetAtTime(targetGain, audioCtx.currentTime, 0.1);
-    resonanceOsc.frequency.setTargetAtTime(targetFreq, audioCtx.currentTime, 0.1);
+function playClickSound() {
+    if (!audioEnabled || !audioCtx || audioCtx.state === 'suspended') return;
+    try {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.1);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.11);
+    } catch (e) {
+        console.warn("Gagal memainkan suara klik:", e);
+    }
 }
 
 function playSuccessChime() {
-    if (!audioEnabled || !audioCtx) return;
-    
-    const now = audioCtx.currentTime;
-    // Arpeggio
-    const freqs = [329.63, 392.00, 523.25, 659.25, 783.99, 1046.50]; // C Major scale arpeggio
-    
-    freqs.forEach((freq, index) => {
-        const osc = audioCtx.createOscillator();
-        const gainNode = audioCtx.createGain();
-        
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(freq, now + (index * 0.08));
-        
-        gainNode.gain.setValueAtTime(0, now);
-        gainNode.gain.linearRampToValueAtTime(0.15, now + (index * 0.08) + 0.02);
-        gainNode.gain.exponentialRampToValueAtTime(0.0001, now + (index * 0.08) + 0.8);
-        
-        osc.connect(gainNode);
-        gainNode.connect(audioCtx.destination);
-        
-        osc.start(now + (index * 0.08));
-        osc.stop(now + (index * 0.08) + 0.85);
-    });
+    if (!audioEnabled || !audioCtx || audioCtx.state === 'suspended') return;
+    try {
+        const now = audioCtx.currentTime;
+        const freqs = [329.63, 392.00, 523.25, 659.25, 783.99, 1046.50]; // Tangga nada C Major Arpeggio
+        freqs.forEach((freq, index) => {
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(freq, now + (index * 0.08));
+            gainNode.gain.setValueAtTime(0, now);
+            gainNode.gain.linearRampToValueAtTime(0.15, now + (index * 0.08) + 0.02);
+            gainNode.gain.exponentialRampToValueAtTime(0.0001, now + (index * 0.08) + 0.8);
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            osc.start(now + (index * 0.08));
+            osc.stop(now + (index * 0.08) + 0.85);
+        });
+    } catch (e) {
+        console.warn("Gagal memainkan lonceng keberhasilan:", e);
+    }
 }
 
-function playClickSound() {
-    if (!audioEnabled || !audioCtx) return;
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.frequency.setValueAtTime(880, audioCtx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + 0.1);
-    gain.gain.setValueAtTime(0.05, audioCtx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.1);
-    osc.connect(gain);
-    gain.connect(audioCtx.destination);
-    osc.start();
-    osc.stop(audioCtx.currentTime + 0.11);
+// --- Fullscreen API Implementation ---
+function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().then(() => {
+            const fsBtn = document.getElementById('fullscreen-btn');
+            if (fsBtn) fsBtn.innerHTML = '<i class="fa-solid fa-compress"></i>';
+        }).catch(err => {
+            console.error(`Gagal mengaktifkan Fullscreen: ${err.message}`);
+        });
+    } else {
+        document.exitFullscreen().then(() => {
+            const fsBtn = document.getElementById('fullscreen-btn');
+            if (fsBtn) fsBtn.innerHTML = '<i class="fa-solid fa-expand"></i>';
+        });
+    }
 }
 
-
-// --- Three.js Setup & Scene Initialization ---
+// --- Three.js Environment Setup ---
 function initThree() {
     const container = document.getElementById('canvas-container');
-    
     scene = new THREE.Scene();
-    // Dark space fog
-    scene.fog = new THREE.FogExp2(0x07070b, 0.035);
 
     camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 0, 10);
+    camera.position.set(0, 0, 8);
 
-    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     container.appendChild(renderer.domElement);
 
-    // Orbit Controls fallback
     controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
-    controls.minDistance = 5;
-    controls.maxDistance = 15;
-    controls.enablePan = false;
+    controls.rotateSpeed = 0.8;
+    controls.enableZoom = false; // Fokus pada pergeseran perspektif
 
-    // Lights
-    const ambientLight = new THREE.AmbientLight(0x221144, 1.5);
+    // Pencahayaan Dunia Esoteris
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
     scene.add(ambientLight);
 
-    const pointLight1 = new THREE.PointLight(0x8a2be2, 2, 50);
+    const pointLight1 = new THREE.PointLight(0x8a2be2, 1.5, 30);
     pointLight1.position.set(5, 5, 5);
     scene.add(pointLight1);
 
-    const pointLight2 = new THREE.PointLight(0x00ffff, 2, 50);
-    pointLight2.position.set(-5, -5, -5);
+    const pointLight2 = new THREE.PointLight(0x00ffff, 1.2, 30);
+    pointLight2.position.set(-5, -5, 3);
     scene.add(pointLight2);
 
-    // Particles/Stars
-    createAmbientParticles();
-
-    // Start rendering loop
-    animate();
-
-    window.addEventListener('resize', () => {
-        clearTimeout(_resizeTimer);
-        _resizeTimer = setTimeout(onWindowResize, 150);
-    });
-}
-
-function createAmbientParticles() {
-    const particleCount = 400;
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(particleCount * 3);
-    const colors = new Float32Array(particleCount * 3);
-
-    for (let i = 0; i < particleCount * 3; i += 3) {
-        // Random spherical positions
-        const radius = 10 + Math.random() * 20;
-        const theta = Math.random() * Math.PI * 2;
-        const phi = Math.acos(2 * Math.random() - 1);
-
-        positions[i] = radius * Math.sin(phi) * Math.cos(theta);
-        positions[i + 1] = radius * Math.sin(phi) * Math.sin(theta);
-        positions[i + 2] = radius * Math.cos(phi);
-
-        // Mix purplish and cyan particle colors
-        const isCyan = Math.random() > 0.5;
-        colors[i] = isCyan ? 0.0 : 0.6;
-        colors[i + 1] = isCyan ? 0.9 : 0.2;
-        colors[i + 2] = isCyan ? 1.0 : 0.9;
+    // Bintang Latar Belakang (Ambient Stars)
+    const starsGeometry = new THREE.BufferGeometry();
+    const starsCount = 500;
+    const starPositions = new Float32Array(starsCount * 3);
+    for(let i=0; i < starsCount * 3; i++) {
+        starPositions[i] = (Math.random() - 0.5) * 40;
     }
-
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-    // Custom round particles
-    const material = new THREE.PointsMaterial({
-        size: 0.15,
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.8,
-        blending: THREE.AdditiveBlending
-    });
-
-    particles = new THREE.Points(geometry, material);
+    starsGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+    const starsMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.05, transparent: true, opacity: 0.6 });
+    particles = new THREE.Points(starsGeometry, starsMaterial);
     scene.add(particles);
+
+    loadLevel(currentLevelIndex);
+    animate();
 }
 
-// --- Puzzle/Level 3D Object Creators ---
-
-// Level 1: Aetheria Ring (Fragmented concentric rings)
-function createLevel1(group) {
-    // Inti Cahaya (Center core)
-    const coreGeo = new THREE.SphereGeometry(0.6, 20, 20);
-    const coreMat = new THREE.MeshBasicMaterial({ color: 0x00ffff });
-    const core = new THREE.Mesh(coreGeo, coreMat);
-    group.add(core);
-
-    // Fragmented rings. We split rings into sections or use torus shapes that are rotated off-center
-    // In three.js we create an illusion of broken fragments that align when looked at from the target camera angle
-    // Let's create components that are offset physically in 3D, so when viewed from target angle, they form flat parallel circular alignments.
+// --- Level Builders ---
+function loadLevel(index) {
+    if (levelGroup) scene.remove(levelGroup);
     
-    // Outer Ring Part 1
-    const outer1Geo = new THREE.TorusGeometry(3, 0.08, 16, 100, Math.PI);
-    const outer1Mat = new THREE.MeshStandardMaterial({ color: 0x8a2be2, emissive: 0x8a2be2, roughness: 0.2 });
-    const outer1 = new THREE.Mesh(outer1Geo, outer1Mat);
-    // Displaced significantly in Z axis and rotated so it only aligns at target angle
-    outer1.position.set(0, 0, -2);
-    outer1.rotation.set(0, 0, 0.4);
-    group.add(outer1);
-
-    // Outer Ring Part 2
-    const outer2Geo = new THREE.TorusGeometry(3, 0.08, 16, 100, Math.PI);
-    const outer2 = new THREE.Mesh(outer2Geo, outer1Mat);
-    outer2.position.set(0, 0, 2);
-    outer2.rotation.set(0, 0, Math.PI + 0.4);
-    group.add(outer2);
-
-    // Inner Ring
-    const innerGeo = new THREE.TorusGeometry(1.8, 0.06, 16, 100);
-    const innerMat = new THREE.MeshStandardMaterial({ color: 0x00ffff, emissive: 0x00ffff });
-    const inner = new THREE.Mesh(innerGeo, innerMat);
-    inner.position.set(0.5, -0.2, 0); // slightly off-center in X,Y but matches from target angle
-    inner.rotation.set(0.3, 0.4, 0);
-    group.add(inner);
-
-    // Helper visual guide alignment pieces that merge visually
-    const crossbar1 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 4, 0.1), outer1Mat);
-    crossbar1.position.set(-0.2, 0, -1);
-    crossbar1.rotation.z = 0.5;
-    group.add(crossbar1);
-
-    const crossbar2 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 4, 0.1), outer1Mat);
-    crossbar2.position.set(0.2, 0, 1);
-    crossbar2.rotation.z = 0.5;
-    group.add(crossbar2);
-}
-
-// Level 2: Constellation (Forming a glowing Key symbol)
-function createLevel2(group) {
-    // We place glowing star spheres in 3D coordinates.
-    // When projected onto screen from the target angle, they form a Key shape.
-    
-    // Let's define the 2D key template coordinates on a plane
-    // and project them along the target angle with different Z depths.
-    
-    // Target camera angle represents a rotation vector
-    // Let's use a simple approach: layout the Key shape relative to the camera's final orientation,
-    // then randomize their distances (depths) along the line of sight.
-    // From any other perspective, they look like a random cloud of stars.
-    
-    const keyPoints = [
-        // Ring/Handle of the key
-        { x: 0, y: 1.5 }, { x: 0.5, y: 1.3 }, { x: 0.7, y: 0.8 }, { x: 0.5, y: 0.3 },
-        { x: 0, y: 0.1 }, { x: -0.5, y: 0.3 }, { x: -0.7, y: 0.8 }, { x: -0.5, y: 1.3 },
-        // Shaft of the key
-        { x: 0, y: -0.3 }, { x: 0, y: -0.8 }, { x: 0, y: -1.3 }, { x: 0, y: -1.8 }, { x: 0, y: -2.3 },
-        // Teeth of the key
-        { x: 0.6, y: -1.8 }, { x: 0.6, y: -2.3 }, { x: 0.3, y: -1.8 }, { x: 0.3, y: -2.3 }
-    ];
-
-    // Rotation Matrix matching the target angle
-    const targetEuler = new THREE.Euler(
-        levels[1].targetAngle.x,
-        levels[1].targetAngle.y,
-        levels[1].targetAngle.z,
-        'YXZ'
-    );
-    const targetRotation = new THREE.Matrix4().makeRotationFromEuler(targetEuler);
-
-    const starMaterial = new THREE.MeshBasicMaterial({ color: 0x00ffff });
-    const starGeo = new THREE.SphereGeometry(0.12, 8, 8);
-
-    keyPoints.forEach(p => {
-        // Star relative vector (where Z is front/back)
-        // Give each star a random depth Z from -4 to 4, but hold the exact X & Y projection
-        const depth = (Math.random() - 0.5) * 6;
-        const vec = new THREE.Vector3(p.x * 1.5, p.y * 1.5, depth);
-        
-        // Transform the point using the inverse of the target rotation
-        // This ensures that when the camera matches the target rotation, the points align perfectly!
-        vec.applyMatrix4(targetRotation);
-
-        const star = new THREE.Mesh(starGeo, starMaterial);
-        star.position.copy(vec);
-        group.add(star);
-
-        // Add a tiny glowing line to other stars occasionally to make it look like a constellation
-        if (Math.random() > 0.6) {
-            const glowRingGeo = new THREE.RingGeometry(0.15, 0.2, 16);
-            const glowRingMat = new THREE.MeshBasicMaterial({ color: 0x8a2be2, side: THREE.DoubleSide, transparent: true, opacity: 0.5 });
-            const glowRing = new THREE.Mesh(glowRingGeo, glowRingMat);
-            glowRing.position.copy(vec);
-            glowRing.lookAt(0, 0, 0);
-            group.add(glowRing);
-        }
-    });
-
-    // Ambient runic center marker
-    const core = new THREE.Mesh(new THREE.DodecahedronGeometry(0.4), new THREE.MeshStandardMaterial({ color: 0x8a2be2, roughness: 0.1 }));
-    group.add(core);
-}
-
-// Level 3: Pillars Alignment (3 vertical columns with fragment carvings)
-function createLevel3(group) {
-    // 3 Columns spaced out along the Z axis
-    // Pillar 1: Back, holds outer elements of a central rune
-    // Pillar 2: Middle, holds mid elements of a central rune
-    // Pillar 3: Front, holds inner core element of the rune
-    // All align to project the final rune when viewed from target angle.
-
-    const pillarMat = new THREE.MeshStandardMaterial({ 
-        color: 0x181824, 
-        roughness: 0.8,
-        metalness: 0.2
-    });
-    const runeMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc });
-
-    const pillarPositions = [
-        { x: -1.8, y: 0, z: -2.5 }, // Pillar Left/Back
-        { x: 0,    y: 0, z: 0 },    // Pillar Center
-        { x: 1.8,  y: 0, z: 2.5 }   // Pillar Right/Front
-    ];
-
-    // Pillar Geometry
-    const colGeo = new THREE.BoxGeometry(0.8, 6, 0.8);
-
-    pillarPositions.forEach((pos, idx) => {
-        const pillar = new THREE.Mesh(colGeo, pillarMat);
-        pillar.position.copy(pos);
-        group.add(pillar);
-
-        // Add runic carvings that stick out or float off-center, aligning from the target angle
-        // Target camera Euler
-        const targetEuler = new THREE.Euler(
-            levels[2].targetAngle.x,
-            levels[2].targetAngle.y,
-            levels[2].targetAngle.z,
-            'YXZ'
-        );
-        const targetRotation = new THREE.Matrix4().makeRotationFromEuler(targetEuler);
-
-        // Let's create fragments based on index
-        let fragGeo;
-        if (idx === 0) {
-            // Back: Outer diamond/square frame
-            fragGeo = new THREE.RingGeometry(1.5, 1.6, 4);
-        } else if (idx === 1) {
-            // Middle: An inner circle + horizontal bar
-            fragGeo = new THREE.TorusGeometry(0.9, 0.05, 8, 48);
-        } else {
-            // Front: Glowing cross/core symbol
-            fragGeo = new THREE.BoxGeometry(0.12, 1.2, 0.12);
-            const extraBar = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.12, 0.12), runeMat);
-            extraBar.position.set(pos.x, pos.y + 0.3, pos.z);
-            
-            // Transform extraBar to align at target angle
-            const localVec = new THREE.Vector3(0, 0.3, 0);
-            localVec.applyMatrix4(targetRotation);
-            extraBar.position.copy(pos).add(localVec);
-            extraBar.rotation.setFromRotationMatrix(targetRotation);
-            group.add(extraBar);
-        }
-
-        if (fragGeo) {
-            const frag = new THREE.Mesh(fragGeo, runeMat);
-            // Orient it parallel to target camera plane, positioned exactly at the pillar location
-            frag.rotation.setFromRotationMatrix(targetRotation);
-            group.add(frag);
-            
-            // Adjust position so its flat projection is aligned
-            frag.position.copy(pos);
-        }
-    });
-}
-
-
-// --- Alignment Mechanics ---
-function checkAlignment() {
-    if (isAligned) return;
-
-    // Throttle: only run every ALIGN_CHECK_INTERVAL frames
-    _alignFrameSkip++;
-    if (_alignFrameSkip < ALIGN_CHECK_INTERVAL) return;
-    _alignFrameSkip = 0;
-
-    // Get current level data
-    const levelData = levels[currentLevel];
-    
-    const currentYaw = controls.getAzimuthalAngle();
-    const currentPitch = controls.getPolarAngle() - Math.PI / 2;
-
-    const targetYaw = levelData.targetAngle.y;
-    const targetPitch = levelData.targetAngle.x;
-
-    let yawDiff = Math.abs(currentYaw - targetYaw);
-    while (yawDiff > Math.PI) yawDiff = Math.abs(yawDiff - 2 * Math.PI);
-    
-    const pitchDiff = Math.abs(currentPitch - targetPitch);
-    const totalDeviation = Math.sqrt(yawDiff * yawDiff + pitchDiff * pitchDiff);
-
-    const maxDeviationRange = 1.0;
-    alignmentProgress = Math.max(0, 1 - (totalDeviation / maxDeviationRange));
-    alignmentProgress = Math.pow(alignmentProgress, 3); 
-
-    const alignmentPercentage = Math.round(alignmentProgress * 100);
-    
-    // Only touch DOM when the displayed value actually changes
-    if (alignmentPercentage !== _lastAlignPct) {
-        _lastAlignPct = alignmentPercentage;
-        _elAlignProgress.style.width = alignmentPercentage + '%';
-        _elAlignPercentage.innerText = alignmentPercentage + '%';
-    }
-
-    // Tone resonance feedback
-    updateResonanceAudio(alignmentProgress);
-
-    // Check success condition
-    if (totalDeviation < levelData.tolerance) {
-        if (window.Multiplayer && window.Multiplayer.isActive) {
-            if (window.Multiplayer.gameMode === 'coop') {
-                alignmentProgress = 1.0;
-                window.Multiplayer.publishState(camera.position, 1.0);
-                window.Multiplayer.updateInGameHUD();
-                window.Multiplayer.checkCoopVictoryCondition();
-            } else if (window.Multiplayer.gameMode === 'versus') {
-                window.Multiplayer.onLocalSuccess();
-            }
-        } else {
-            triggerSuccess();
-        }
-    } else {
-        if (window.Multiplayer && window.Multiplayer.isActive) {
-            window.Multiplayer.onLocalMove();
-            window.Multiplayer.updateInGameHUD();
-        }
-    }
-}
-
-function triggerSuccess() {
-    isAligned = true;
-    alignmentProgress = 1;
-    document.getElementById('alignment-progress').style.width = '100%';
-    document.getElementById('alignment-percentage').innerText = '100%';
-    document.getElementById('alignment-progress').style.boxShadow = '0 0 20px #00ff88';
-
-    // Highlight all items in the group to glow green
-    levelGroup.traverse(child => {
-        if (child.isMesh && child.material) {
-            child.material.color.setHex(0x00ff88);
-            if (child.material.emissive) {
-                child.material.emissive.setHex(0x00ff88);
-            }
-        }
-    });
-
-    // Play chime sound
-    playSuccessChime();
-
-    // Show popup
-    setTimeout(() => {
-        const nextBtn = document.getElementById('next-level-btn');
-        if (currentLevel === levels.length - 1) {
-            // Final level finished
-            document.getElementById('ending-overlay').classList.remove('hidden');
-        } else {
-            // Next level transition popup
-            document.getElementById('success-message').innerText = `Teka-teki ke-${currentLevel + 1} berhasil kamu sejajarkan.`;
-            document.getElementById('success-overlay').classList.remove('hidden');
-        }
-    }, 1200);
-}
-
-
-// --- Navigation and UI Controls ---
-function setupUI() {
-    // Start button logic
-    document.getElementById('start-game-btn').addEventListener('click', () => {
-        if (window.Multiplayer) {
-            window.Multiplayer.isActive = false;
-            document.getElementById('multiplayer-hud').classList.add('hidden');
-        }
-        initAudio();
-        document.getElementById('start-overlay').classList.add('hidden');
-        loadLevel(0);
-    });
-
-    // Audio Button toggle
-    document.getElementById('audio-btn').addEventListener('click', () => {
-        if (!audioCtx) {
-            initAudio();
-            return;
-        }
-        if (audioCtx.state === 'suspended') {
-            audioCtx.resume();
-            audioEnabled = true;
-            document.getElementById('audio-btn').innerHTML = '<i class="fa-solid fa-volume-high"></i>';
-        } else if (audioEnabled) {
-            audioEnabled = false;
-            document.getElementById('audio-btn').innerHTML = '<i class="fa-solid fa-volume-xmark"></i>';
-            if (resonanceGain) resonanceGain.gain.setValueAtTime(0, audioCtx.currentTime);
-        } else {
-            audioEnabled = true;
-            document.getElementById('audio-btn').innerHTML = '<i class="fa-solid fa-volume-high"></i>';
-        }
-        playClickSound();
-    });
-
-    // Next Level Button logic
-    document.getElementById('next-level-btn').addEventListener('click', () => {
-        playClickSound();
-        document.getElementById('success-overlay').classList.add('hidden');
-        if (window.Multiplayer && window.Multiplayer.isActive) {
-            window.Multiplayer.onLocalLoadLevel(currentLevel + 1);
-        } else {
-            loadLevel(currentLevel + 1);
-        }
-    });
-
-    // Restart/Reset game
-    document.getElementById('restart-game-btn').addEventListener('click', () => {
-        playClickSound();
-        document.getElementById('ending-overlay').classList.add('hidden');
-        if (window.Multiplayer && window.Multiplayer.isActive) {
-            window.Multiplayer.onLocalLoadLevel(0);
-        } else {
-            loadLevel(0);
-        }
-    });
-
-    // Hint Modal Toggle
-    document.getElementById('hint-btn').addEventListener('click', () => {
-        playClickSound();
-        const hintText = levels[currentLevel].hint;
-        document.getElementById('hint-text').innerText = hintText;
-        document.getElementById('hint-popup').classList.remove('hidden');
-    });
-
-    document.getElementById('close-hint-btn').addEventListener('click', () => {
-        playClickSound();
-        document.getElementById('hint-popup').classList.add('hidden');
-    });
-
-    // AR Button Simulator
-    document.getElementById('ar-btn').addEventListener('click', () => {
-        playClickSound();
-        // WebXR Simulator alert/enable
-        document.getElementById('ar-fallback-alert').classList.remove('hidden');
-        // Instantly position camera close to level to simulate scanning ground
-        camera.position.set(0, 2, 8);
-        controls.target.set(0, 0, 0);
-        controls.update();
-    });
-
-    document.getElementById('close-ar-alert-btn').addEventListener('click', () => {
-        document.getElementById('ar-fallback-alert').classList.add('hidden');
-    });
-}
-
-function loadLevel(levelIdx) {
-    currentLevel = levelIdx;
     isAligned = false;
-    alignmentProgress = 0;
-    _lastAlignPct = -1; // Reset cached percentage
-    _alignFrameSkip = 0;
-
-    // Cache DOM elements on first call
-    if (!_elAlignProgress) _elAlignProgress = document.getElementById('alignment-progress');
-    if (!_elAlignPercentage) _elAlignPercentage = document.getElementById('alignment-percentage');
-
-    _elAlignProgress.style.width = '0%';
-    _elAlignPercentage.innerText = '0%';
-    _elAlignProgress.style.boxShadow = '0 0 10px var(--secondary)';
-
-    // Update level UI titles
-    const levelData = levels[currentLevel];
-    document.getElementById('current-level-num').innerText = romanize(currentLevel + 1);
-    document.getElementById('riddle-title').innerText = levelData.title;
-    document.getElementById('riddle-desc').innerText = levelData.desc;
-
-    // Dispose previous level geometry & materials to prevent memory leaks
-    if (levelGroup) {
-        levelGroup.traverse(child => {
-            if (child.geometry) child.geometry.dispose();
-            if (child.material) {
-                if (Array.isArray(child.material)) {
-                    child.material.forEach(m => m.dispose());
-                } else {
-                    child.material.dispose();
-                }
-            }
-        });
-        scene.remove(levelGroup);
-    }
     levelGroup = new THREE.Group();
+    levelGroup.scale.set(0.01, 0.01, 0.01); // Efek membesar di awal animasi
     scene.add(levelGroup);
 
-    // Call level geometry builder
-    levelData.setup(levelGroup);
+    const data = levels[index];
+    document.getElementById('level-title').innerText = `RITUAL ${romanize(index + 1)}: ${data.title.split(': ')[1]}`;
+    document.getElementById('level-desc').innerHTML = data.desc;
+    document.getElementById('level-hint').innerText = data.hint;
 
-    // Animate level entry (fade scale or rise up)
-    levelGroup.scale.set(0.01, 0.01, 0.01);
+    data.setup();
+}
+
+function createLevel1() {
+    // Lingkaran Luar Berpindah Tempat
+    const outerGeo = new THREE.RingGeometry(2.2, 2.4, 64);
+    const outerMat = new THREE.MeshBasicMaterial({ color: 0x8a2be2, side: THREE.DoubleSide, transparent: true, opacity: 0.8 });
+    const outerRing = new THREE.Mesh(outerGeo, outerMat);
+    outerRing.position.set(-0.5, 0.3, -1);
+    outerRing.rotation.set(0.2, 0.4, 0);
+    levelGroup.add(outerRing);
+
+    // Lingkaran Dalam Berpindah Tempat
+    const innerGeo = new THREE.RingGeometry(1.4, 1.6, 64);
+    const innerMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, side: THREE.DoubleSide, transparent: true, opacity: 0.8 });
+    const innerRing = new THREE.Mesh(innerGeo, innerMat);
+    innerRing.position.set(0.6, -0.4, 1.2);
+    innerRing.rotation.set(-0.3, 0.1, 0);
+    levelGroup.add(innerRing);
+
+    // Inti Pusat Cahaya
+    const coreGeo = new THREE.SphereGeometry(0.3, 32, 32);
+    const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const core = new THREE.Mesh(coreGeo, coreMat);
+    core.position.set(0, 0, 0);
+    levelGroup.add(core);
+}
+
+function createLevel2() {
+    // Membuat rasi bintang tiruan acak yang tampak rapi dari satu sudut pandang tertentu
+    const positions = [
+        [0, 1.5, 0], [0, 0.5, 0], [0, -0.5, 0], [0, -1.5, 0], // Batang Kunci
+        [0.5, 1.5, 0], [0.5, 1.0, 0], // Gigi atas
+        [-0.5, -0.5, 0], [-1, -0.5, 0], [-1, -1.2, 0], [-0.5, -1.2, 0] // Handle cincin bawah
+    ];
     
-    // Position camera randomly at start of level to puzzle user
-    const randomAngle = Math.random() * Math.PI * 2;
-    camera.position.set(
-        Math.sin(randomAngle) * 8,
-        (Math.random() - 0.5) * 4,
-        Math.cos(randomAngle) * 8
-    );
-    controls.update();
+    positions.forEach((pos, idx) => {
+        const starGeo = new THREE.SphereGeometry(0.12, 16, 16);
+        const starMat = new THREE.MeshBasicMaterial({ color: idx % 2 === 0 ? 0x00ffff : 0xff007f });
+        const star = new THREE.Mesh(starGeo, starMat);
+        
+        // Membuyarkan posisi asli agar terlihat acak dari depan, namun sejajar pada target koordinat rahasia
+        const depthDistortion = (idx - positions.length / 2) * 0.7;
+        star.position.set(
+            pos[0] + depthDistortion * 0.3,
+            pos[1] - depthDistortion * 0.2,
+            pos[2] + depthDistortion
+        );
+        levelGroup.add(star);
+    });
 }
 
-function romanize(num) {
-    if (num === 1) return "I";
-    if (num === 2) return "II";
-    if (num === 3) return "III";
-    return num;
+function createLevel3() {
+    // Tiga Pilar Utama Proyeksi Rune Kuno
+    for (let i = -1; i <= 1; i++) {
+        if (i === 0) continue;
+        const pilarGeo = new THREE.CylinderGeometry(0.2, 0.2, 3, 16);
+        const pilarMat = new THREE.MeshStandardMaterial({ color: 0x333344, roughness: 0.7 });
+        const pilar = new THREE.Mesh(pilarGeo, pilarMat);
+        pilar.position.set(i * 2.5, 0, i * 1.5);
+        levelGroup.add(pilar);
+    }
+    
+    const centerGeo = new THREE.TorusGeometry(0.8, 0.1, 16, 100);
+    const centerMat = new THREE.MeshBasicMaterial({ color: 0x00ff88, wireframe: true });
+    const centerRune = new THREE.Mesh(centerGeo, centerMat);
+    centerRune.position.set(0, 0, -2);
+    levelGroup.add(centerRune);
 }
 
-function onWindowResize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
+// --- Alignment Check Logic ---
+function checkAlignment() {
+    const target = levels[currentLevelIndex].targetAngle;
+    const tolerance = levels[currentLevelIndex].tolerance;
+
+    // Hitung normalisasi posisi rotasi kamera
+    const cx = Math.sin(camera.rotation.x);
+    const cy = Math.sin(camera.rotation.y);
+
+    const diffX = Math.abs(cx - Math.sin(target.x));
+    const diffY = Math.abs(cy - Math.sin(target.y));
+
+    // Modulasi feedback suara detak dinamis berdasarkan kedekatan jarak
+    if (audioEnabled && resonanceGain) {
+        const proximity = 1.0 - Math.min(1.0, (diffX + diffY) / 1.5);
+        resonanceGain.gain.setValueAtTime(proximity * 0.25, audioCtx.currentTime);
+        if (resonanceOsc) {
+            resonanceOsc.frequency.setValueAtTime(220 + (proximity * 220), audioCtx.currentTime);
+        }
+    }
+
+    if (diffX < tolerance && diffY < tolerance) {
+        isAligned = true;
+        playSuccessChime();
+        
+        // Animasi transisi naik level
+        setTimeout(() => {
+            currentLevelIndex = (currentLevelIndex + 1) % levels.length;
+            loadLevel(currentLevelIndex);
+        }, 2200);
+    }
 }
 
-// --- Render / Loop ---
+// --- Render Loop ---
 function animate() {
     requestAnimationFrame(animate);
 
-    // Render logic updates
-    if (controls) {
-        controls.update();
-    }
+    if (controls) controls.update();
 
-    // Slowly rotate level group slightly for floating dynamic feel
     if (levelGroup && !isAligned) {
-        // Expand scale up to 1 slowly at start
         if (levelGroup.scale.x < 1) {
             levelGroup.scale.addScalar(0.03);
             if (levelGroup.scale.x > 1) levelGroup.scale.set(1, 1, 1);
         }
-        
-        // Floating animation
         levelGroup.position.y = Math.sin(Date.now() * 0.001) * 0.15;
     }
 
-    // Rotate background ambient stars/particles
     if (particles) {
         particles.rotation.y += 0.0003;
         particles.rotation.x += 0.0001;
     }
 
-    // Run perspective checker
     if (levelGroup && !isAligned) {
         checkAlignment();
     }
 
-    // Update remote multiplayer player avatars in 3D scene
     if (window.Multiplayer && window.Multiplayer.isActive) {
         window.Multiplayer.updateRemoteAvatars();
     }
 
-    renderer.render(scene, camera);
+    if (renderer && scene && camera) {
+        renderer.render(scene, camera);
+    }
 }
 
-// Start everything
+// --- Kamera Realtime (Webcam AR Handler) ---
+async function startWebcam() {
+    const video = document.getElementById('webcam');
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "environment" },
+            audio: false
+        });
+        video.srcObject = stream;
+    } catch (e) {
+        console.warn("Kamera AR belakang tidak tersedia, mengaktifkan simulasi giroskop.");
+        const fallbackAlert = document.getElementById('ar-fallback-alert');
+        if (fallbackAlert) fallbackAlert.classList.remove('hidden');
+    }
+}
+
+// --- Initialize Event Listeners ---
 window.addEventListener('DOMContentLoaded', () => {
     initThree();
-    setupUI();
+    startWebcam();
+
+    document.getElementById('audio-btn').addEventListener('click', () => {
+        initAudio();
+        playClickSound();
+    });
+
+    document.getElementById('fullscreen-btn').addEventListener('click', () => {
+        initAudio();
+        toggleFullscreen();
+        playClickSound();
+    });
+
+    const closeAlert = document.getElementById('close-ar-alert-btn');
+    if (closeAlert) {
+        closeAlert.addEventListener('click', () => {
+            document.getElementById('ar-fallback-alert').classList.add('hidden');
+        });
+    }
+
+    // Unclog system audio on mobile tap inside the canvas
+    document.body.addEventListener('click', () => {
+        initAudio();
+    }, { once: true });
 });
+
+function onWindowResize() {
+    if (camera && renderer) {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+}
+window.addEventListener('resize', onWindowResize);

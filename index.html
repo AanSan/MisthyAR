@@ -18,66 +18,233 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
 <body>
-    <!-- Webcam background element for AR -->
-    <video id="webcam" autoplay playsinline></video>
-
-    <!-- Three.js Canvas Container -->
+    <!-- Background Canvas for Three.js -->
     <div id="canvas-container"></div>
-    
-    <!-- UI Overlay -->
-    <div id="ui-container">
-        <div class="header">
-            <h1 class="title">AETHERIA</h1>
-            <div class="controls-header">
-                <button id="audio-btn" class="btn-icon" title="Aktifkan Audio Suara"><i class="fa-solid fa-volume-xmark"></i></button>
-                <button id="fullscreen-btn" class="btn-icon" title="Mode Layar Penuh"><i class="fa-solid fa-expand"></i></button>
+
+    <!-- Mystical Vignette / Noise Overlay -->
+    <div class="vignette-overlay"></div>
+    <div class="noise-overlay"></div>
+
+    <!-- UI Overlay / HUD -->
+    <div id="hud-container">
+        <!-- Header -->
+        <header class="game-header">
+            <div class="logo">
+                <span class="logo-icon"><i class="fa-solid fa-wand-magic-sparkles"></i></span>
+                <h1>AETHERIA</h1>
+            </div>
+            <div class="level-indicator">
+                <span class="label">Riddle</span>
+                <span id="current-level-num" class="value">I</span>
+            </div>
+            <div class="audio-toggle" id="audio-btn">
+                <i class="fa-solid fa-volume-xmark"></i>
+            </div>
+        </header>
+
+        <!-- Main HUD Panel (Bottom Center/Left) -->
+        <div class="hud-panel bottom-panel">
+            <div class="riddle-box">
+                <h2 id="riddle-title">Gerbang Pertama: Pecahan Cahaya</h2>
+                <p id="riddle-desc">"Yang terpecah dalam ruang harus disatukan oleh pandangan yang tepat. Temukan sudut kebenaran."</p>
+            </div>
+            
+            <div class="alignment-tracker">
+                <div class="tracker-label">Resonansi Jiwa</div>
+                <div class="progress-bar-container">
+                    <div id="alignment-progress" class="progress-bar"></div>
+                </div>
+                <div id="alignment-percentage" class="percentage-val">0%</div>
+            </div>
+
+            <div class="hud-controls">
+                <button id="ar-btn" class="btn btn-primary btn-glow">
+                    <i class="fa-solid fa-cube"></i> Mode AR (Gunakan Kamera)
+                </button>
+                <button id="hint-btn" class="btn btn-secondary">
+                    <i class="fa-solid fa-lightbulb"></i> Petunjuk
+                </button>
             </div>
         </div>
 
-        <!-- Menu Tab -->
-        <div class="tabs">
-            <button id="tab-single-btn" class="tab-btn active">Ritual Sendiri</button>
-            <button id="tab-multi-btn" class="tab-btn">Ritual Bersama</button>
+        <!-- Hint Popup -->
+        <div id="hint-popup" class="popup-overlay hidden">
+            <div class="popup-content">
+                <h3><i class="fa-solid fa-circle-info"></i> Bisikan Aether</h3>
+                <p id="hint-text">Coba geser pandanganmu secara vertikal dan sejajarkan lingkaran terluar dengan bagian intinya.</p>
+                <button id="close-hint-btn" class="btn btn-small">Mengerti</button>
+            </div>
         </div>
 
-        <!-- Single Player Panel -->
-        <div id="single-player-panel" class="panel">
-            <h2 id="level-title">Memuat Portal...</h2>
-            <p id="level-desc">Silakan tunggu, menyelaraskan frekuensi dimensi kuno...</p>
-            <p id="level-hint" class="hint"></p>
+        <!-- Welcome / Start Screen Overlay -->
+        <div id="start-overlay" class="overlay">
+            <div class="overlay-card glass lobby-card">
+                <div class="rune-seal"></div>
+                <h2 class="title-glow">A E T H E R I A</h2>
+                <p class="subtitle">3D AR Perspective Puzzle</p>
+                
+                <!-- Mode Tabs -->
+                <div class="mode-tabs">
+                    <button id="tab-single-btn" class="tab-btn active"><i class="fa-solid fa-user"></i> Ritual Sendiri</button>
+                    <button id="tab-multi-btn" class="tab-btn"><i class="fa-solid fa-users"></i> Ritual Bersama</button>
+                </div>
+
+                <!-- Single Player Content -->
+                <div id="single-player-panel" class="tab-panel">
+                    <div class="intro-text">
+                        <p>Alam semesta menyimpan rahasia dalam dimensi tersembunyi. Hanya mereka yang berani melihat dari sudut pandang yang berbeda yang dapat mengungkap kebenaran.</p>
+                        <p class="instruction-tip"><i class="fa-solid fa-mobile-screen-button"></i> <strong>Instruksi:</strong> Putar atau orbitkan kameramu di sekitar objek misterius sampai bentuknya sejajar sempurna dan bersinar.</p>
+                    </div>
+                    <button id="start-game-btn" class="btn btn-primary btn-glow btn-large">
+                        <i class="fa-solid fa-play"></i> Mulai Ritual
+                    </button>
+                </div>
+
+                <!-- Multiplayer Setup Content -->
+                <div id="multiplayer-panel" class="tab-panel hidden">
+                    <div class="mp-setup-fields">
+                        <div class="input-group">
+                            <label for="player-name-input">Nama Pencari</label>
+                            <input type="text" id="player-name-input" placeholder="Masukkan nama..." maxlength="12">
+                        </div>
+                        <div class="input-group">
+                            <label>Warna Jiwa (Avatar)</label>
+                            <div class="color-picker" id="color-picker-container">
+                                <button class="color-btn active" data-color="#00ffff" style="background-color: #00ffff;"></button>
+                                <button class="color-btn" data-color="#ff00ff" style="background-color: #ff00ff;"></button>
+                                <button class="color-btn" data-color="#8a2be2" style="background-color: #8a2be2;"></button>
+                                <button class="color-btn" data-color="#ffd700" style="background-color: #ffd700;"></button>
+                                <button class="color-btn" data-color="#00ff88" style="background-color: #00ff88;"></button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mp-actions">
+                        <button id="create-room-btn" class="btn btn-primary btn-glow">
+                            <i class="fa-solid fa-circle-plus"></i> Buat Gerbang Baru
+                        </button>
+                        <div class="join-action-box">
+                            <input type="text" id="room-code-input" placeholder="KODE GERBANG" maxlength="6" style="text-transform: uppercase;">
+                            <button id="join-room-btn" class="btn btn-secondary">
+                                <i class="fa-solid fa-arrow-right-to-bracket"></i> Gabung
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Multiplayer Lobby Content (Hidden by default) -->
+                <div id="multiplayer-lobby-panel" class="tab-panel hidden">
+                    <div class="lobby-info">
+                        <span class="lobby-label">Kode Gerbang Dimensi</span>
+                        <div class="room-code-display">
+                            <h3 id="lobby-room-code">-</h3>
+                            <button id="copy-code-btn" class="btn-icon" title="Salin Kode"><i class="fa-regular fa-copy"></i></button>
+                        </div>
+                    </div>
+
+                    <div class="lobby-settings" id="lobby-host-controls">
+                        <label>Mode Ritual:</label>
+                        <div class="mode-select-btns">
+                            <button id="mode-coop-btn" class="mode-btn active" data-mode="coop">Kerjasama (Co-op)</button>
+                            <button id="mode-versus-btn" class="mode-btn" data-mode="versus">Persaingan (Versus)</button>
+                        </div>
+                    </div>
+                    <div class="lobby-settings" id="lobby-client-view" style="display: none;">
+                        <span class="mode-label">Mode Ritual: <strong id="lobby-current-mode-label">Kerjasama (Co-op)</strong></span>
+                    </div>
+
+                    <div class="players-list-box">
+                        <h4>Pencari Terhubung (<span id="lobby-player-count">1</span>/5)</h4>
+                        <div id="lobby-players-list" class="players-scroll-list">
+                            <!-- Players listed dynamically -->
+                        </div>
+                    </div>
+
+                    <div class="lobby-actions">
+                        <button id="start-mp-game-btn" class="btn btn-primary btn-glow btn-large" disabled>
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> Mulai Ritual Bersama
+                        </button>
+                        <button id="leave-lobby-btn" class="btn btn-secondary btn-small">
+                            <i class="fa-solid fa-arrow-left"></i> Keluar
+                        </button>
+                    </div>
+                </div>
+
+            </div>
         </div>
 
-        <!-- Multiplayer Panel -->
-        <div id="multiplayer-panel" class="panel hidden">
-            <div class="input-group">
-                <input type="text" id="player-name-input" placeholder="Masukkan Nama Anda" maxlength="15">
+        <!-- Level Success Overlay -->
+        <div id="success-overlay" class="overlay hidden">
+            <div class="overlay-card glass success-card">
+                <div class="success-icon"><i class="fa-solid fa-circle-check"></i></div>
+                <h2 class="text-glow-green">Resonansi Sempurna!</h2>
+                <p id="success-message">Gerbang dimensi telah terbuka...</p>
+                <button id="next-level-btn" class="btn btn-primary btn-glow btn-large">
+                    Lanjutkan Perjalanan <i class="fa-solid fa-arrow-right"></i>
+                </button>
             </div>
-            <div id="color-picker-container">
-                <span class="label">Warna Aura:</span>
-                <button class="color-btn active" data-color="#00ffff" style="background:#00ffff;"></button>
-                <button class="color-btn" data-color="#8a2be2" style="background:#8a2be2;"></button>
-                <button class="color-btn" data-color="#ff007f" style="background:#ff007f;"></button>
-                <button class="color-btn" data-color="#00ff88" style="background:#00ff88;"></button>
+        </div>
+
+        <!-- Versus Winner Overlay -->
+        <div id="versus-overlay" class="overlay hidden">
+            <div class="overlay-card glass versus-card">
+                <div class="versus-icon"><i class="fa-solid fa-trophy"></i></div>
+                <h2 class="text-glow-green" id="versus-winner-title">Pemenang Ditemukan!</h2>
+                <p id="versus-winner-msg">Pemain telah menyejajarkan dimensi pertama!</p>
+                
+                <div class="versus-leaderboard">
+                    <h4>Papan Skor</h4>
+                    <div id="versus-leaderboard-list">
+                        <!-- Dynamic scores -->
+                    </div>
+                </div>
+
+                <button id="versus-next-btn" class="btn btn-primary btn-glow btn-large hidden">
+                    Lanjutkan Perjalanan <i class="fa-solid fa-arrow-right"></i>
+                </button>
+                <div id="versus-wait-msg" class="wait-msg">Menunggu Host melanjutkan ritual...</div>
             </div>
-            <div class="actions">
-                <button id="create-room-btn" class="btn btn-primary">Buka Gerbang (Host)</button>
-                <div class="join-group">
-                    <input type="text" id="room-code-input" placeholder="KODE" maxlength="4">
-                    <button id="join-room-btn" class="btn btn-secondary">Masuk Gerbang</button>
+        </div>
+
+        <!-- Ending Overlay -->
+        <div id="ending-overlay" class="overlay hidden">
+            <div class="overlay-card glass ending-card">
+                <div class="rune-seal glowing-seal"></div>
+                <h2 class="title-glow">Gerbang Terbuka</h2>
+                <p class="subtitle">Teka-teki Aetheria Telah Terpecahkan</p>
+                <div class="intro-text">
+                    <p>Selamat, Pencari Kebenaran. Kamu telah menyejajarkan dimensi yang retak dan memulihkan energi Aetheria.</p>
+                    <p>Setiap sudut pandang yang kamu temukan membuktikan bahwa kebenaran sejati sering kali hanya memerlukan sudut pandang yang berbeda.</p>
+                </div>
+                <button id="restart-game-btn" class="btn btn-primary btn-glow btn-large">
+                    Mainkan Lagi
+                </button>
+            </div>
+        </div>
+
+        <!-- Multiplayer In-Game HUD -->
+        <div id="multiplayer-hud" class="multiplayer-hud hidden">
+            <div class="mp-hud-header">
+                <span id="hud-room-code-display">Room: -</span>
+                <span id="hud-mode-display" class="hud-mode-badge">Co-op</span>
+            </div>
+            <div class="mp-hud-body">
+                <div class="mp-player-list" id="mp-hud-players">
+                    <!-- Dynamic player rows with color and alignment progress -->
                 </div>
             </div>
-        </div>
+            
+            <!-- Shared Co-op progress bar if co-op mode -->
+            <div id="mp-coop-progress-container" class="mp-coop-progress hidden">
+                <div class="mp-coop-label">Resonansi Gerbang</div>
+                <div class="progress-bar-container">
+                    <div id="mp-coop-progress-bar" class="progress-bar coop-bar"></div>
+                </div>
+                <div id="mp-coop-percentage" class="percentage-val">0%</div>
+            </div>
 
-        <!-- Multiplayer HUD (Akan muncul ketika terhubung ke room) -->
-        <div id="multiplayer-hud" class="multiplayer-hud hidden">
-            <div class="hud-header">
-                <span id="hud-room-display">ROOM: ----</span>
-                <span id="hud-role-display" class="badge">PLAYER</span>
-            </div>
-            <div id="player-list-container">
-                <!-- Diisi via JavaScript secara dinamis -->
-            </div>
-            <div class="hud-chat-actions">
+            <!-- Quick Chat Emote Trigger -->
+            <div class="mp-chat-trigger">
                 <button id="mp-chat-btn" class="btn btn-secondary btn-small">
                     <i class="fa-solid fa-message"></i> Kirim Bisikan
                 </button>
@@ -102,7 +269,9 @@
 
     <!-- MQTT.js for multiplayer synchronization -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
-    <script src="app.js"></script>
+    <!-- Multiplayer Game script -->
     <script src="multiplayer.js"></script>
+    <!-- Core Game script -->
+    <script src="app.js"></script>
 </body>
 </html>
